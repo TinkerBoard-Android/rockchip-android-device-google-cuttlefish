@@ -3,10 +3,6 @@ on early-init
 
     mount securityfs securityfs /sys/kernel/security
 
-    # For KCOV
-    mount debugfs debugfs /sys/kernel/debug
-    chmod 0755 /sys/kernel/debug
-
     setprop ro.sf.lcd_density ${ro.boot.lcd_density}
     setprop ro.hardware.egl ${ro.boot.hardware.egl}
     setprop ro.hardware.gralloc ${ro.boot.hardware.gralloc}
@@ -137,3 +133,9 @@ service bugreport /system/bin/dumpstate -d -p -z
     disabled
     oneshot
     keycodes 30 48
+
+# TODO: disable this service once cuttlefish implements system suspend
+service suspend_blocker /vendor/bin/suspend_blocker
+    class early_hal # Start together with system_suspend HAL
+    group system
+    user root
