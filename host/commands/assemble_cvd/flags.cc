@@ -236,6 +236,8 @@ DEFINE_string(boot_slot, "", "Force booting into the given slot. If empty, "
              "the slot will be chosen based on the misc partition if using a "
              "bootloader. It will default to 'a' if empty and not using a "
              "bootloader.");
+DEFINE_bool(use_slot_suffix, true, "Whether to pass the slot_suffix kernel "
+            "parameter if not using a bootloader.");
 DEFINE_int32(num_instances, 1, "Number of Android guests to launch");
 DEFINE_string(report_anonymous_usage_stats, "", "Report anonymous usage "
             "statistics for metrics collection and analysis.");
@@ -325,42 +327,6 @@ std::string StrForInstance(const std::string& prefix, int num) {
   return stream.str();
 }
 
-bool ShouldEnableAcceleratedRendering(const GraphicsAvailability& availability) {
-  return availability.has_egl &&
-         availability.has_egl_surfaceless_with_gles &&
-         availability.has_discrete_gpu;
-}
-
-// Runs GetGraphicsAvailability() inside of a subprocess to ensure that
-// GetGraphicsAvailability() can complete successfully without crashing
-// assemble_cvd. Configurations such as GCE instances without a GPU but with GPU
-// drivers for example have seen crashes.
-GraphicsAvailability GetGraphicsAvailabilityWithSubprocessCheck() {
-  const std::string detect_graphics_bin =
-      DefaultHostArtifactsPath("bin/detect_graphics");
-
-  Command detect_graphics_cmd(detect_graphics_bin);
-
-  SubprocessOptions detect_graphics_options;
-  detect_graphics_options.Verbose(false);
-
-  std::string detect_graphics_output;
-  std::string detect_graphics_error;
-  int ret = RunWithManagedStdio(std::move(detect_graphics_cmd),
-                                nullptr,
-                                &detect_graphics_output,
-                                &detect_graphics_error,
-                                detect_graphics_options);
-  if (ret == 0) {
-    return GetGraphicsAvailability();
-  }
-  LOG(VERBOSE) << "Subprocess for detect_graphics failed with "
-               << ret
-               << " : "
-               << detect_graphics_output;
-  return GraphicsAvailability{};
-}
-
 } // namespace
 
 CuttlefishConfig InitializeCuttlefishConfiguration(
@@ -383,7 +349,7 @@ CuttlefishConfig InitializeCuttlefishConfiguration(
   const GraphicsAvailability graphics_availability =
     GetGraphicsAvailabilityWithSubprocessCheck();
 
-  LOG(VERBOSE) << GetGraphicsAvailabilityString(graphics_availability);
+  LOG(VERBOSE) << graphics_availability;
 
   tmp_config_obj.set_gpu_mode(FLAGS_gpu_mode);
 
@@ -613,6 +579,7 @@ CuttlefishConfig InitializeCuttlefishConfiguration(
   if (!FLAGS_boot_slot.empty()) {
       tmp_config_obj.set_boot_slot(FLAGS_boot_slot);
   }
+  tmp_config_obj.set_use_slot_suffix(FLAGS_use_slot_suffix);
 
   tmp_config_obj.set_cuttlefish_env_path(GetCuttlefishEnvPath());
 

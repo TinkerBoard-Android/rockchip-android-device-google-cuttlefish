@@ -19,11 +19,12 @@
 #include <sstream>
 #include <vector>
 
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
 #include <android-base/logging.h>
 #include <android-base/strings.h>
 #include <dlfcn.h>
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
+#include <sys/wait.h>
 #include <vulkan/vulkan.h>
 
 namespace cuttlefish {
@@ -46,56 +47,55 @@ private:
   std::function<void()> on_close_;
 };
 
+struct LibraryCloser {
+ public:
+  void operator()(void* library) { dlclose(library); }
+};
+
+using ManagedLibrary = std::unique_ptr<void, LibraryCloser>;
+
 void PopulateGlAvailability(GraphicsAvailability* availability) {
-  void* gl_lib = dlopen(kGlLib, RTLD_NOW | RTLD_LOCAL);
-  if (gl_lib == nullptr) {
+  ManagedLibrary gl_lib(dlopen(kGlLib, RTLD_NOW | RTLD_LOCAL));
+  if (!gl_lib) {
     LOG(VERBOSE) << "Failed to dlopen " << kGlLib << ".";
     return;
   }
   LOG(VERBOSE) << "Loaded " << kGlLib << ".";
-  Closer gl_lib_closer([&]() { dlclose(gl_lib); });
-
   availability->has_gl = true;
 }
 
 void PopulateGles1Availability(GraphicsAvailability* availability) {
-  void* gles1_lib = dlopen(kGles1Lib, RTLD_NOW | RTLD_LOCAL);
-  if (gles1_lib == nullptr) {
+  ManagedLibrary gles1_lib(dlopen(kGles1Lib, RTLD_NOW | RTLD_LOCAL));
+  if (!gles1_lib) {
     LOG(VERBOSE) << "Failed to dlopen " << kGles1Lib << ".";
     return;
   }
   LOG(VERBOSE) << "Loaded " << kGles1Lib << ".";
-  Closer gles1_lib_closer([&]() { dlclose(gles1_lib); });
-
   availability->has_gles1 = true;
 }
 
 void PopulateGles2Availability(GraphicsAvailability* availability) {
-  void* gles2_lib = dlopen(kGles2Lib, RTLD_NOW | RTLD_LOCAL);
-  if (gles2_lib == nullptr) {
+  ManagedLibrary gles2_lib(dlopen(kGles2Lib, RTLD_NOW | RTLD_LOCAL));
+  if (!gles2_lib) {
     LOG(VERBOSE) << "Failed to dlopen " << kGles2Lib << ".";
     return;
   }
   LOG(VERBOSE) << "Loaded " << kGles2Lib << ".";
-  Closer gles2_lib_closer([&]() { dlclose(gles2_lib); });
-
   availability->has_gles2 = true;
 }
 
 void PopulateEglAvailability(GraphicsAvailability* availability) {
-  void* egllib = dlopen(kEglLib, RTLD_NOW | RTLD_LOCAL);
-  if (egllib == nullptr) {
+  ManagedLibrary egllib(dlopen(kEglLib, RTLD_NOW | RTLD_LOCAL));
+  if (!egllib) {
     LOG(VERBOSE) << "Failed to dlopen " << kEglLib << ".";
     return;
   }
   LOG(VERBOSE) << "Loaded " << kEglLib << ".";
-  Closer egllib_closer([&]() { dlclose(egllib); });
-
   availability->has_egl = true;
 
   PFNEGLGETPROCADDRESSPROC eglGetProcAddress =
-    reinterpret_cast<PFNEGLGETPROCADDRESSPROC>(
-      dlsym(egllib, "eglGetProcAddress"));
+      reinterpret_cast<PFNEGLGETPROCADDRESSPROC>(
+          dlsym(egllib.get(), "eglGetProcAddress"));
   if (eglGetProcAddress == nullptr) {
     LOG(VERBOSE) << "Failed to find function eglGetProcAddress.";
     return;
@@ -105,9 +105,9 @@ void PopulateEglAvailability(GraphicsAvailability* availability) {
   // Some implementations have it so that eglGetProcAddress is only for
   // loading EXT functions.
   auto EglLoadFunction = [&](const char* name) {
-    void* func =  dlsym(egllib, name);
+    void* func = dlsym(egllib.get(), name);
     if (func == NULL) {
-        func = reinterpret_cast<void*>(eglGetProcAddress(name));
+      func = reinterpret_cast<void*>(eglGetProcAddress(name));
     }
     return func;
   };
@@ -341,28 +341,27 @@ void PopulateEglAvailability(GraphicsAvailability* availability) {
 }
 
 void PopulateVulkanAvailability(GraphicsAvailability* availability) {
-  void* vklib = dlopen(kVulkanLib, RTLD_NOW | RTLD_LOCAL);
-  if (vklib == nullptr) {
+  ManagedLibrary vklib(dlopen(kVulkanLib, RTLD_NOW | RTLD_LOCAL));
+  if (!vklib) {
     LOG(VERBOSE) << "Failed to dlopen " << kVulkanLib << ".";
     return;
   }
   LOG(VERBOSE) << "Loaded " << kVulkanLib << ".";
-  Closer vklib_closer([&]() { dlclose(vklib); });
   availability->has_vulkan = true;
 
   uint32_t instance_version = 0;
 
   PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr =
-    reinterpret_cast<PFN_vkGetInstanceProcAddr>(
-      dlsym(vklib, "vkGetInstanceProcAddr"));
+      reinterpret_cast<PFN_vkGetInstanceProcAddr>(
+          dlsym(vklib.get(), "vkGetInstanceProcAddr"));
   if (vkGetInstanceProcAddr == nullptr) {
     LOG(VERBOSE) << "Failed to find symbol vkGetInstanceProcAddr.";
     return;
   }
 
   PFN_vkEnumerateInstanceVersion vkEnumerateInstanceVersion =
-    reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
-      dlsym(vklib, "vkEnumerateInstanceVersion"));
+      reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
+          dlsym(vklib.get(), "vkEnumerateInstanceVersion"));
   if (vkEnumerateInstanceVersion == nullptr ||
       vkEnumerateInstanceVersion(&instance_version) != VK_SUCCESS) {
     instance_version = VK_API_VERSION_1_0;
@@ -529,10 +528,6 @@ void PopulateVulkanAvailability(GraphicsAvailability* availability) {
   }
 }
 
-inline std::string BoolString(bool val) { return val ? "true" : "false"; }
-
-}  // namespace
-
 GraphicsAvailability GetGraphicsAvailability() {
   GraphicsAvailability availability;
 
@@ -545,56 +540,65 @@ GraphicsAvailability GetGraphicsAvailability() {
   return availability;
 }
 
-std::string GetGraphicsAvailabilityString(
+}  // namespace
+
+bool ShouldEnableAcceleratedRendering(
     const GraphicsAvailability& availability) {
-  std::ostringstream stream;
-  stream << "Graphics Availability:"
-         << std::endl;
-  stream << "OpenGL available: "
-         << BoolString(availability.has_gl)
-         << std::endl;
-  stream << "OpenGL ES1 available: "
-         << BoolString(availability.has_gles1)
-         << std::endl;
-  stream << "OpenGL ES2 available: "
-         << BoolString(availability.has_gles2)
-         << std::endl;
-  stream << "EGL available: "
-         << BoolString(availability.has_egl)
-         << std::endl;
-  stream << "EGL client extensions: "
-         << availability.egl_client_extensions
-         << std::endl;
+  return availability.has_egl && availability.has_egl_surfaceless_with_gles &&
+         availability.has_discrete_gpu;
+}
+
+// Runs GetGraphicsAvailability() inside of a subprocess first to ensure that
+// GetGraphicsAvailability() can complete successfully without crashing
+// assemble_cvd. Configurations such as GCE instances without a GPU but with GPU
+// drivers for example have seen crashes.
+GraphicsAvailability GetGraphicsAvailabilityWithSubprocessCheck() {
+  pid_t pid = fork();
+  if (pid == 0) {
+    GetGraphicsAvailability();
+    std::exit(0);
+  }
+  int status;
+  if (waitpid(pid, &status, 0) != pid) {
+    PLOG(ERROR) << "Failed to wait for graphics check subprocess";
+    return GraphicsAvailability{};
+  }
+  if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+    return GetGraphicsAvailability();
+  }
+  LOG(VERBOSE) << "Subprocess for detect_graphics failed with " << status;
+  return GraphicsAvailability{};
+}
+
+std::ostream& operator<<(std::ostream& stream,
+                         const GraphicsAvailability& availability) {
+  std::ios_base::fmtflags flags_backup(stream.flags());
+  stream << std::boolalpha;
+  stream << "Graphics Availability:\n";
+  stream << "OpenGL available: " << availability.has_gl << "\n";
+  stream << "OpenGL ES1 available: " << availability.has_gles1 << "\n";
+  stream << "OpenGL ES2 available: " << availability.has_gles2 << "\n";
+  stream << "EGL available: " << availability.has_egl << "\n";
+  stream << "EGL client extensions: " << availability.egl_client_extensions
+         << "\n";
   stream << "EGL default display available: "
-         << BoolString(availability.has_egl_default_display)
-         << std::endl;
-  stream << "EGL display vendor: "
-         << availability.egl_vendor
-         << std::endl;
-  stream << "EGL display version: "
-         << availability.egl_version
-         << std::endl;
-  stream << "EGL display extensions: "
-         << availability.egl_extensions
-         << std::endl;
+         << availability.has_egl_default_display << "\n";
+  stream << "EGL display vendor: " << availability.egl_vendor << "\n";
+  stream << "EGL display version: " << availability.egl_version << "\n";
+  stream << "EGL display extensions: " << availability.egl_extensions << "\n";
   stream << "EGL surfaceless display with GLES: "
-         << BoolString(availability.has_egl_surfaceless_with_gles)
-         << std::endl;
-  stream << "Vulkan available: "
-         << BoolString(availability.has_vulkan)
-         << std::endl;
-  stream << "Vulkan discrete GPU detected: "
-         << BoolString(availability.has_discrete_gpu)
-         << std::endl;
+         << availability.has_egl_surfaceless_with_gles << "\n";
+  stream << "Vulkan available: " << availability.has_vulkan << "\n";
+  stream << "Vulkan discrete GPU detected: " << availability.has_discrete_gpu
+         << "\n";
   if (availability.has_discrete_gpu) {
     stream << "Vulkan discrete GPU device name: "
-           << availability.discrete_gpu_device_name
-           << std::endl;
+           << availability.discrete_gpu_device_name << "\n";
     stream << "Vulkan discrete GPU device extensions: "
-           << availability.discrete_gpu_device_extensions
-           << std::endl;
+           << availability.discrete_gpu_device_extensions << "\n";
   }
-  return stream.str();
+  stream.flags(flags_backup);
+  return stream;
 }
 
 } // namespace cuttlefish

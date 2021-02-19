@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include <ostream>
 #include <string>
 
 namespace cuttlefish {
@@ -36,8 +37,9 @@ struct GraphicsAvailability {
   std::string discrete_gpu_device_extensions;
 };
 
-GraphicsAvailability GetGraphicsAvailability();
+bool ShouldEnableAcceleratedRendering(const GraphicsAvailability& availability);
+GraphicsAvailability GetGraphicsAvailabilityWithSubprocessCheck();
 
-std::string GetGraphicsAvailabilityString(const GraphicsAvailability& info);
+std::ostream& operator<<(std::ostream& out, const GraphicsAvailability& info);
 
 }  // namespace cuttlefish
