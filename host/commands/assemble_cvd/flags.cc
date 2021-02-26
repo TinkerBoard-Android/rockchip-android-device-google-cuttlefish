@@ -39,8 +39,9 @@ using google::FlagSettingMode::SET_FLAGS_DEFAULT;
 
 DEFINE_string(config, "phone",
               "Config preset name. Will automatically set flag fields "
-              "using the values from this file of presets. Possible values: "
-              "phone,tablet,foldable,auto,tv");
+              "using the values from this file of presets. See "
+              "device/google/cuttlefish/shared/config/config_*.json "
+              "for possible values.");
 
 DEFINE_int32(cpus, 2, "Virtual CPU count.");
 DEFINE_string(data_policy, "use_existing", "How to handle userdata partition."
@@ -98,7 +99,6 @@ DEFINE_bool(enable_minimal_mode, false,
 DEFINE_bool(pause_in_bootloader, false,
             "Stop the bootflow in u-boot. You can continue the boot by connecting "
             "to the device console and typing in \"boot\".");
-DEFINE_bool(enable_rootcanal, false, "Enables the root-canal service");
 
 /**
  *
@@ -594,8 +594,6 @@ CuttlefishConfig InitializeCuttlefishConfiguration(
 
   tmp_config_obj.set_ethernet(FLAGS_ethernet);
 
-  tmp_config_obj.set_enable_rootcanal(FLAGS_enable_rootcanal);
-
   std::vector<int> num_instances;
   for (int i = 0; i < FLAGS_num_instances; i++) {
     num_instances.push_back(GetInstance() + i);
@@ -667,10 +665,6 @@ CuttlefishConfig InitializeCuttlefishConfiguration(
       instance.set_gnss_file_path(gnss_file_paths[num-1]);
     }
 
-    instance.set_rootcanal_hci_port(7300 + num - 1);
-    instance.set_rootcanal_link_port(7400 + num - 1);
-    instance.set_rootcanal_test_port(7500 + num - 1);
-
     instance.set_device_title(FLAGS_device_title);
 
     instance.set_virtual_disk_paths({
@@ -732,9 +726,15 @@ CuttlefishConfig InitializeCuttlefishConfiguration(
 void SetDefaultFlagsFromConfigPreset() {
   std::string config_preset = FLAGS_config;  // The name of the preset config.
   std::string config_file_path;  // The path to the preset config JSON.
-  const std::set<std::string> allowed_config_presets = {
-      "phone", "tablet", "foldable", "tv", "auto",
-  };
+  std::set<std::string> allowed_config_presets;
+  for (const std::string& file :
+       DirectoryContents(DefaultHostArtifactsPath("etc/cvd_config"))) {
+    std::string_view local_file(file);
+    if (android::base::ConsumePrefix(&local_file, "cvd_config_") &&
+        android::base::ConsumeSuffix(&local_file, ".json")) {
+      allowed_config_presets.emplace(local_file);
+    }
+  }
 
   // If the user specifies a --config name, then use that config
   // preset option and save their choice to a file.
