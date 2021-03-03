@@ -270,6 +270,8 @@ DEFINE_bool(record_screen, false, "Enable screen recording. "
 
 DEFINE_bool(ethernet, false, "Enable Ethernet network interface");
 
+DEFINE_bool(smt, false, "Enable simultaneous multithreading (SMT/HT)");
+
 DEFINE_int32(vsock_guest_cid,
              cuttlefish::GetDefaultVsockCid(),
              "vsock_guest_cid is used to determine the guest vsock cid as well as all the ports"
@@ -289,6 +291,8 @@ DEFINE_int32(vsock_guest_cid,
 DEFINE_string(secure_hals, "keymint,gatekeeper",
               "Which HALs to use enable host security features for. Supports "
               "keymint and gatekeeper at the moment.");
+
+DEFINE_bool(use_sdcard, true, "Create blank SD-Card image and expose to guest");
 
 DECLARE_string(system_image_dir);
 
@@ -401,7 +405,11 @@ CuttlefishConfig InitializeCuttlefishConfiguration(
                " does not work with vm_manager=" << FLAGS_vm_manager;
   }
 
+  CHECK(!FLAGS_smt || FLAGS_cpus % 2 == 0)
+      << "CPUs must be a multiple of 2 in SMT mode";
   tmp_config_obj.set_cpus(FLAGS_cpus);
+  tmp_config_obj.set_smt(FLAGS_smt);
+
   tmp_config_obj.set_memory_mb(FLAGS_memory_mb);
 
   tmp_config_obj.set_setupwizard_mode(FLAGS_setupwizard_mode);
@@ -548,15 +556,16 @@ CuttlefishConfig InitializeCuttlefishConfiguration(
     }
   }
   std::vector<CustomActionConfig> custom_actions;
-  Json::Reader reader;
+  Json::CharReaderBuilder builder;
   Json::Value custom_action_array(Json::arrayValue);
   if (custom_action_config != "") {
     // Load the custom action config JSON.
     std::ifstream ifs(custom_action_config);
-    if (!reader.parse(ifs, custom_action_array)) {
+    std::string errorMessage;
+    if (!Json::parseFromStream(builder, ifs, &custom_action_array, &errorMessage)) {
       LOG(FATAL) << "Could not read custom actions config file "
                  << custom_action_config << ": "
-                 << reader.getFormattedErrorMessages();
+                 << errorMessage;
     }
     for (const auto& custom_action : custom_action_array) {
       custom_actions.push_back(CustomActionConfig(custom_action));
@@ -564,9 +573,12 @@ CuttlefishConfig InitializeCuttlefishConfiguration(
   }
   if (FLAGS_custom_actions != "") {
     // Load the custom action from the --config preset file.
-    if (!reader.parse(FLAGS_custom_actions, custom_action_array)) {
+    std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
+    std::string errorMessage;
+    if (!reader->parse(&*FLAGS_custom_actions.begin(), &*FLAGS_custom_actions.end(),
+                       &custom_action_array, &errorMessage)) {
       LOG(FATAL) << "Could not read custom actions config flag: "
-                 << reader.getFormattedErrorMessages();
+                 << errorMessage;
     }
     for (const auto& custom_action : custom_action_array) {
       custom_actions.push_back(CustomActionConfig(custom_action));
@@ -591,6 +603,7 @@ CuttlefishConfig InitializeCuttlefishConfiguration(
   tmp_config_obj.set_enable_minimal_mode(FLAGS_enable_minimal_mode);
 
   tmp_config_obj.set_vhost_net(FLAGS_vhost_net);
+
   tmp_config_obj.set_record_screen(FLAGS_record_screen);
 
   tmp_config_obj.set_ethernet(FLAGS_ethernet);
@@ -674,11 +687,14 @@ CuttlefishConfig InitializeCuttlefishConfiguration(
 
     instance.set_device_title(FLAGS_device_title);
 
-    instance.set_virtual_disk_paths({
+    std::vector<std::string> virtual_disk_paths = {
       const_instance.PerInstancePath("overlay.img"),
-      const_instance.sdcard_path(),
-      const_instance.factory_reset_protected_path(),
-    });
+      const_instance.factory_reset_protected_path()
+    };
+    if (FLAGS_use_sdcard) {
+      virtual_disk_paths.push_back(const_instance.sdcard_path());
+    }
+    instance.set_virtual_disk_paths(virtual_disk_paths);
 
     std::array<unsigned char, 6> mac_address;
     mac_address[0] = 1 << 6; // locally administered
@@ -744,31 +760,28 @@ void SetDefaultFlagsFromConfigPreset() {
   }
 
   // If the user specifies a --config name, then use that config
-  // preset option and save their choice to a file.
-  std::string config_preset_file_path =
-      StringFromEnv("HOME", ".") + "/.cuttlefish_config_preset";
+  // preset option.
+  std::string android_info_path = DefaultGuestImagePath("/android-info.txt");
   if (IsFlagSet("config")) {
     if (!allowed_config_presets.count(config_preset)) {
       LOG(FATAL) << "Invalid --config option '" << config_preset
                  << "'. Valid options: "
                  << android::base::Join(allowed_config_presets, ",");
     }
-    // Write the name of the config preset to a file. Only the name is
-    // written, not the contents of the config itself, in order to allow
-    // forwards compatibility if config fields change.
-    std::ofstream ofs(config_preset_file_path);
-    if (ofs.is_open()) {
-      ofs << config_preset;
-    }
-  } else if (FileExists(config_preset_file_path)) {
-    // Load the config preset option from the file if it exists.
-    std::ifstream ifs(config_preset_file_path);
+  } else if (FileExists(android_info_path)) {
+    // Otherwise try to load the correct preset using android-info.txt.
+    std::ifstream ifs(android_info_path);
     if (ifs.is_open()) {
-      ifs >> config_preset;
+      std::string android_info;
+      ifs >> android_info;
+      std::string_view local_android_info(android_info);
+      if (android::base::ConsumePrefix(&local_android_info, "config=")) {
+        config_preset = local_android_info;
+      }
       if (!allowed_config_presets.count(config_preset)) {
-        LOG(WARNING) << config_preset_file_path
-                     << " contains invalid config preset: '" << config_preset
-                     << "'. Defaulting to 'phone'.";
+        LOG(WARNING) << android_info_path
+                     << " contains invalid config preset: '"
+                     << local_android_info << "'. Defaulting to 'phone'.";
         config_preset = "phone";
       }
     }
@@ -778,17 +791,18 @@ void SetDefaultFlagsFromConfigPreset() {
   config_file_path = DefaultHostArtifactsPath("etc/cvd_config/cvd_config_" +
                                               config_preset + ".json");
   Json::Value config;
-  Json::Reader config_reader;
+  Json::CharReaderBuilder builder;
   std::ifstream ifs(config_file_path);
-  if (!config_reader.parse(ifs, config)) {
+  std::string errorMessage;
+  if (!Json::parseFromStream(builder, ifs, &config, &errorMessage)) {
     LOG(FATAL) << "Could not read config file " << config_file_path << ": "
-               << config_reader.getFormattedErrorMessages();
+               << errorMessage;
   }
   for (const std::string& flag : config.getMemberNames()) {
     std::string value;
     if (flag == "custom_actions") {
-      Json::FastWriter writer;
-      value = writer.write(config[flag]);
+      Json::StreamWriterBuilder factory;
+      value = Json::writeString(factory, config[flag]);
     } else {
       value = config[flag].asString();
     }

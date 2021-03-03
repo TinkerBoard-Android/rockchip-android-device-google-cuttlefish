@@ -44,7 +44,6 @@ DEFINE_string(system_image_dir, cuttlefish::DefaultGuestImagePath(""),
 DEFINE_string(boot_image, "",
               "Location of cuttlefish boot image. If empty it is assumed to be "
               "boot.img in the directory specified by -system_image_dir.");
-DEFINE_string(cache_image, "", "Location of the cache partition image.");
 DEFINE_string(data_image, "", "Location of the data partition image.");
 DEFINE_string(super_image, "", "Location of the super partition image.");
 DEFINE_string(misc_image, "",
@@ -66,10 +65,11 @@ DEFINE_string(esp, "", "Path to ESP partition image (FAT formatted)");
 DEFINE_int32(blank_metadata_image_mb, 16,
              "The size of the blank metadata image to generate, MB.");
 DEFINE_int32(blank_sdcard_image_mb, 2048,
-             "The size of the blank sdcard image to generate, MB.");
+             "If enabled, the size of the blank sdcard image to generate, MB.");
 
 DECLARE_string(bootloader);
 DECLARE_bool(use_bootloader);
+DECLARE_bool(use_sdcard);
 DECLARE_string(initramfs_path);
 DECLARE_string(kernel_path);
 DECLARE_bool(resume);
@@ -88,9 +88,6 @@ bool ResolveInstanceFiles() {
   // be placed in --system_image_dir location.
   std::string default_boot_image = FLAGS_system_image_dir + "/boot.img";
   SetCommandLineOptionWithMode("boot_image", default_boot_image.c_str(),
-                               google::FlagSettingMode::SET_FLAGS_DEFAULT);
-  std::string default_cache_image = FLAGS_system_image_dir + "/cache.img";
-  SetCommandLineOptionWithMode("cache_image", default_cache_image.c_str(),
                                google::FlagSettingMode::SET_FLAGS_DEFAULT);
   std::string default_data_image = FLAGS_system_image_dir + "/userdata.img";
   SetCommandLineOptionWithMode("data_image", default_data_image.c_str(),
@@ -210,10 +207,6 @@ std::vector<ImagePartition> disk_config(
   partitions.push_back(ImagePartition {
     .label = "userdata",
     .image_file_path = FLAGS_data_image,
-  });
-  partitions.push_back(ImagePartition {
-    .label = "cache",
-    .image_file_path = FLAGS_cache_image,
   });
   partitions.push_back(ImagePartition {
     .label = "metadata",
@@ -489,7 +482,7 @@ void CreateDynamicDiskFiles(const FetcherConfig& fetcher_config,
       CreateBlankImage(instance.pstore_path(), 2 /* mb */, "none");
     }
 
-    if (!FileExists(instance.sdcard_path())) {
+    if (FLAGS_use_sdcard && !FileExists(instance.sdcard_path())) {
       CreateBlankImage(instance.sdcard_path(),
                        FLAGS_blank_sdcard_image_mb, "sdcard");
     }
