@@ -72,6 +72,7 @@ DECLARE_bool(use_sdcard);
 DECLARE_string(initramfs_path);
 DECLARE_string(kernel_path);
 DECLARE_bool(resume);
+DECLARE_bool(protected_vm);
 
 namespace cuttlefish {
 
@@ -134,6 +135,14 @@ static bool DecompressKernel(const std::string& src, const std::string& dst) {
   return decomp_proc.Started() && decomp_proc.Wait() == 0;
 }
 
+// Repacking is not supported on Android. We can't run the unpacking python
+// script on Android.
+#if !defined(__ANDROID__)
+constexpr bool repack_supported = true;
+#else
+constexpr bool repack_supported = false;
+#endif
+
 std::vector<ImagePartition> disk_config(
     const CuttlefishConfig::InstanceSpecific& instance) {
   std::vector<ImagePartition> partitions;
@@ -164,14 +173,25 @@ std::vector<ImagePartition> disk_config(
     .label = "boot_b",
     .image_file_path = FLAGS_boot_image,
   });
-  partitions.push_back(ImagePartition{
-      .label = "vendor_boot_a",
-      .image_file_path = instance.vendor_boot_image_path(),
-  });
-  partitions.push_back(ImagePartition{
-      .label = "vendor_boot_b",
-      .image_file_path = instance.vendor_boot_image_path(),
-  });
+  if (repack_supported) {
+    partitions.push_back(ImagePartition{
+        .label = "vendor_boot_a",
+        .image_file_path = instance.vendor_boot_image_path(),
+    });
+    partitions.push_back(ImagePartition{
+        .label = "vendor_boot_b",
+        .image_file_path = instance.vendor_boot_image_path(),
+    });
+  } else {
+    partitions.push_back(ImagePartition{
+        .label = "vendor_boot_a",
+        .image_file_path = FLAGS_vendor_boot_image,
+    });
+    partitions.push_back(ImagePartition{
+        .label = "vendor_boot_b",
+        .image_file_path = FLAGS_vendor_boot_image,
+    });
+  }
   partitions.push_back(ImagePartition {
     .label = "vbmeta_a",
     .image_file_path = FLAGS_vbmeta_image,
@@ -385,24 +405,34 @@ void CreateDynamicDiskFiles(const FetcherConfig& fetcher_config,
   CHECK(FileHasContent(FLAGS_vendor_boot_image))
       << "File not found: " << FLAGS_vendor_boot_image;
 
-    // unpack the boot images into the assembly_dir
-  CHECK(UnpackBootImage(FLAGS_boot_image, config->assembly_dir()))
-      << "Failed to unpack boot image";
-  CHECK(UnpackVendorBootImage(FLAGS_vendor_boot_image, config->assembly_dir()))
-      << "Failed to unpack vendor boot image";
 
   std::string discovered_kernel = fetcher_config.FindCvdFileWithSuffix(kKernelDefaultPath);
   std::string foreign_kernel = FLAGS_kernel_path.size() ? FLAGS_kernel_path : discovered_kernel;
   std::string discovered_ramdisk = fetcher_config.FindCvdFileWithSuffix(kInitramfsImg);
   std::string foreign_ramdisk = FLAGS_initramfs_path.size () ? FLAGS_initramfs_path : discovered_ramdisk;
 
-  // check for bootconfig support in whichever kernel we are using
+  // Check for bootconfig support in whichever kernel we are using. Checking
+  // that requires decompressing the kernel and look into it. So, do that only
+  // when the kernel exists.
   const auto& kernel_path =
       foreign_kernel.size() ? foreign_kernel : config->kernel_image_path();
-  bool bootconfig_supported =
+  const bool bootconfig_supported =
+      FileExists(kernel_path) &&
       IsBootconfigSupported(kernel_path, config->assembly_dir());
+
+  // If the kernel and/or ramdisk are passed in, repack is needed. Unpack now in
+  // preparation for the repack.
+  if (repack_supported) {
+    CHECK(UnpackBootImage(FLAGS_boot_image, config->assembly_dir()))
+        << "Failed to unpack boot image";
+    CHECK(
+        UnpackVendorBootImage(FLAGS_vendor_boot_image, config->assembly_dir()))
+        << "Failed to unpack vendor boot image";
+  }
+
   const std::string new_boot_image_path =
       config->AssemblyPath("boot_repacked.img");
+
   for (auto instance : config->Instances()) {
     const std::string new_vendor_boot_image_path =
         instance.vendor_boot_image_path();
@@ -410,6 +440,7 @@ void CreateDynamicDiskFiles(const FetcherConfig& fetcher_config,
         (foreign_kernel.size() || foreign_ramdisk.size())) {
       // Repack the boot images if kernels and/or ramdisks are passed in.
       if (foreign_kernel.size()) {
+        CHECK(repack_supported) << "Repacking not supported on Android";
         bool success =
             RepackBootImage(foreign_kernel, FLAGS_boot_image,
                             new_boot_image_path, config->assembly_dir());
@@ -420,6 +451,7 @@ void CreateDynamicDiskFiles(const FetcherConfig& fetcher_config,
             google::FlagSettingMode::SET_FLAGS_DEFAULT);
       }
       if (foreign_ramdisk.size()) {
+        CHECK(repack_supported) << "Repacking not supported on Android";
         bool success = RepackVendorBootImage(
             foreign_ramdisk, FLAGS_vendor_boot_image,
             new_vendor_boot_image_path, config->assembly_dir(),
@@ -428,6 +460,7 @@ void CreateDynamicDiskFiles(const FetcherConfig& fetcher_config,
                           "new ramdisk";
       }
       if (foreign_kernel.size() && !foreign_ramdisk.size()) {
+        CHECK(repack_supported) << "Repacking not supported on Android";
         bool success = RepackVendorBootImageWithEmptyRamdisk(
             FLAGS_vendor_boot_image, new_vendor_boot_image_path,
             config->assembly_dir(), instance.PerInstanceInternalPath(""),
@@ -436,12 +469,17 @@ void CreateDynamicDiskFiles(const FetcherConfig& fetcher_config,
             << "Failed to regenerate the vendor boot image without a ramdisk";
       }
     } else if (FLAGS_use_bootloader) {
-      // Repack the vendor boot image to add the bootconfig parameters
-      bool success = RepackVendorBootImage(
-          std::string(), FLAGS_vendor_boot_image, new_vendor_boot_image_path,
-          config->assembly_dir(), instance.PerInstanceInternalPath(""),
-          bootconfig_supported);
-      CHECK(success) << "Failed to regenerate the vendor boot image";
+      // Convert the format of the vendor boot image to V4 by repacking it even
+      // when the kernel and/or ramdisk is not given. Right now, we do this only
+      // for the non-Android scenarios because we can't do the repack on Android
+      // due to the lack of tools that do the repacking.
+      if (repack_supported) {
+        bool success = RepackVendorBootImage(
+            std::string(), FLAGS_vendor_boot_image, new_vendor_boot_image_path,
+            config->assembly_dir(), instance.PerInstanceInternalPath(""),
+            bootconfig_supported);
+        CHECK(success) << "Failed to regenerate the vendor boot image";
+      }
     } else if (!FLAGS_use_bootloader) {
       // This code path is taken when the virtual device kernel is launched
       // directly by the hypervisor instead of the bootloader.
@@ -497,23 +535,28 @@ void CreateDynamicDiskFiles(const FetcherConfig& fetcher_config,
     CreateBlankImage(FLAGS_metadata_image, FLAGS_blank_metadata_image_mb, "none");
   }
 
-  for (const auto& instance : config->Instances()) {
-    if (!FileExists(instance.access_kregistry_path())) {
-      CreateBlankImage(instance.access_kregistry_path(), 2 /* mb */, "none");
-    }
+  // If we are booting a protected VM, for now, assume we want a super minimal
+  // environment with no userdata encryption, limited debug, no FRP emulation,
+  // no SD-Card and no resume-on-reboot HAL support
+  if (!FLAGS_protected_vm) {
+    for (const auto& instance : config->Instances()) {
+      if (!FileExists(instance.access_kregistry_path())) {
+        CreateBlankImage(instance.access_kregistry_path(), 2 /* mb */, "none");
+      }
 
-    if (!FileExists(instance.pstore_path())) {
-      CreateBlankImage(instance.pstore_path(), 2 /* mb */, "none");
-    }
+      if (!FileExists(instance.pstore_path())) {
+        CreateBlankImage(instance.pstore_path(), 2 /* mb */, "none");
+      }
 
-    if (FLAGS_use_sdcard && !FileExists(instance.sdcard_path())) {
-      CreateBlankImage(instance.sdcard_path(),
-                       FLAGS_blank_sdcard_image_mb, "sdcard");
-    }
+      if (FLAGS_use_sdcard && !FileExists(instance.sdcard_path())) {
+        CreateBlankImage(instance.sdcard_path(),
+                         FLAGS_blank_sdcard_image_mb, "sdcard");
+      }
 
-    const auto frp = instance.factory_reset_protected_path();
-    if (!FileExists(frp)) {
-      CreateBlankImage(frp, 1 /* mb */, "none");
+      const auto frp = instance.factory_reset_protected_path();
+      if (!FileExists(frp)) {
+        CreateBlankImage(frp, 1 /* mb */, "none");
+      }
     }
   }
 
@@ -548,12 +591,7 @@ void CreateDynamicDiskFiles(const FetcherConfig& fetcher_config,
   for (auto instance : config->Instances()) {
     bool compositeMatchesDiskConfig = DoesCompositeMatchCurrentDiskConfig(instance);
     bool oldCompositeDisk = ShouldCreateCompositeDisk(instance);
-    auto overlay_path = instance.PerInstancePath("overlay.img");
-    bool missingOverlay = !FileExists(overlay_path);
-    bool newOverlay = FileModificationTime(overlay_path)
-        < FileModificationTime(instance.composite_disk_path());
-    if (!compositeMatchesDiskConfig || missingOverlay || oldCompositeDisk || !FLAGS_resume ||
-        newDataImage || newOverlay) {
+    if (!compositeMatchesDiskConfig || oldCompositeDisk || !FLAGS_resume || newDataImage) {
       if (FLAGS_resume) {
         LOG(INFO) << "Requested to continue an existing session, (the default) "
                   << "but the disk files have become out of date. Wiping the "
@@ -562,9 +600,24 @@ void CreateDynamicDiskFiles(const FetcherConfig& fetcher_config,
       }
       CHECK(CreateCompositeDisk(*config, instance))
           << "Failed to create composite disk";
-      CreateQcowOverlay(config->crosvm_binary(), instance.composite_disk_path(), overlay_path);
-      CreateBlankImage(instance.access_kregistry_path(), 2 /* mb */, "none");
-      CreateBlankImage(instance.pstore_path(), 2 /* mb */, "none");
+      if (FileExists(instance.access_kregistry_path())) {
+        CreateBlankImage(instance.access_kregistry_path(), 2 /* mb */, "none");
+      }
+      if (FileExists(instance.pstore_path())) {
+        CreateBlankImage(instance.pstore_path(), 2 /* mb */, "none");
+      }
+    }
+  }
+
+  if (!FLAGS_protected_vm) {
+    for (auto instance : config->Instances()) {
+      auto overlay_path = instance.PerInstancePath("overlay.img");
+      bool missingOverlay = !FileExists(overlay_path);
+      bool newOverlay = FileModificationTime(overlay_path)
+          < FileModificationTime(instance.composite_disk_path());
+      if (!missingOverlay || !FLAGS_resume || newOverlay) {
+        CreateQcowOverlay(config->crosvm_binary(), instance.composite_disk_path(), overlay_path);
+      }
     }
   }
 
