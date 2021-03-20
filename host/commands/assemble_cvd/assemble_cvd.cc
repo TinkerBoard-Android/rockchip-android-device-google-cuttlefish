@@ -139,20 +139,19 @@ const CuttlefishConfig* InitFilesystemAndCreateConfig(
                 << "overlay incompatible. Wiping the overlay files.";
     } else if (FLAGS_resume && !ShouldCreateAllCompositeDisks(config)) {
       preserving.insert("overlay.img");
-      preserving.insert("gpt_header.img");
-      preserving.insert("gpt_footer.img");
-      preserving.insert("composite.img");
+      preserving.insert("os_composite_disk_config.txt");
+      preserving.insert("os_composite_gpt_header.img");
+      preserving.insert("os_composite_gpt_footer.img");
+      preserving.insert("os_composite.img");
       preserving.insert("sdcard.img");
       preserving.insert("uboot_env.img");
       preserving.insert("boot_repacked.img");
       preserving.insert("vendor_boot_repacked.img");
       preserving.insert("access-kregistry");
-      preserving.insert("disk_hole");
       preserving.insert("NVChip");
       preserving.insert("gatekeeper_secure");
       preserving.insert("gatekeeper_insecure");
       preserving.insert("modem_nvram.json");
-      preserving.insert("disk_config.txt");
       preserving.insert("recording");
       preserving.insert("factory_reset_protected.img");
       std::stringstream ss;
@@ -173,8 +172,6 @@ const CuttlefishConfig* InitFilesystemAndCreateConfig(
                   << config.AssemblyPath("assemble_cvd.log")
                   << ": " << log->StrError();
     }
-    std::string disk_hole_dir = FLAGS_assembly_dir + "/disk_hole";
-    CHECK(EnsureDirectoryExists(disk_hole_dir));
     for (const auto& instance : config.Instances()) {
       // Create instance directory if it doesn't exist.
       CHECK(EnsureDirectoryExists(instance.instance_dir()));
