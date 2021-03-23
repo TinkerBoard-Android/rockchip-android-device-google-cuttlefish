@@ -74,7 +74,6 @@ SharedFD CreateUnixInputServer(const std::string& path) {
 void CreateStreamerServers(Command* cmd, const CuttlefishConfig& config) {
   SharedFD touch_server;
   SharedFD keyboard_server;
-  SharedFD switches_server;
 
   auto instance = config.ForDefaultInstance();
   if (config.vm_manager() == QemuManager::name()) {
@@ -101,7 +100,8 @@ void CreateStreamerServers(Command* cmd, const CuttlefishConfig& config) {
   }
   cmd->AddParameter("-keyboard_fd=", keyboard_server);
 
-  if (config.vm_manager() == vm_manager::CrosvmManager::name()) {
+  if (config.enable_webrtc() &&
+      config.vm_manager() == vm_manager::CrosvmManager::name()) {
     SharedFD switches_server =
         CreateUnixInputServer(instance.switches_socket_path());
     if (!switches_server->IsOpen()) {
@@ -192,6 +192,12 @@ void LaunchRootCanal(const CuttlefishConfig& config,
   command.AddParameter(instance.rootcanal_hci_port());
   // Link server port
   command.AddParameter(instance.rootcanal_link_port());
+  // Bluetooth controller properties file
+  command.AddParameter("--controller_properties_file=",
+                       instance.rootcanal_config_file());
+  // Default commands file
+  command.AddParameter("--default_commands_file=",
+                       instance.rootcanal_default_commands_file());
 
   process_monitor->AddCommand(std::move(command));
   return;
