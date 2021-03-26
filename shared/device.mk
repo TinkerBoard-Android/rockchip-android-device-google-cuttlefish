@@ -531,7 +531,7 @@ PRODUCT_PACKAGES += \
 ifeq ($(LOCAL_KEYMINT_PRODUCT_PACKAGE),)
        LOCAL_KEYMINT_PRODUCT_PACKAGE := android.hardware.security.keymint-service
 endif
-# PRODUCT_PACKAGES += \
+PRODUCT_PACKAGES += \
     $(LOCAL_KEYMINT_PRODUCT_PACKAGE)
 
 #
@@ -559,7 +559,8 @@ PRODUCT_PACKAGES += \
     android.hardware.neuralnetworks-service-sample-float-fast \
     android.hardware.neuralnetworks-service-sample-float-slow \
     android.hardware.neuralnetworks-service-sample-minimal \
-    android.hardware.neuralnetworks-service-sample-quant
+    android.hardware.neuralnetworks-service-sample-quant \
+    android.hardware.neuralnetworks-shim-service-sample
 
 #
 # USB
