@@ -82,9 +82,12 @@ function awaitDataChannel(pc, label, onMessage) {
 }
 
 class DeviceConnection {
-  constructor(pc, control) {
+  constructor(pc, control, audio_stream) {
     this._pc = pc;
     this._control = control;
+    this._audio_stream = audio_stream;
+    // Disable the microphone by default
+    this.useMic(false);
     this._inputChannel = createDataChannel(pc, 'input-channel');
     this._adbChannel = createDataChannel(pc, 'adb-channel', (msg) => {
       if (this._onAdbMessage) {
@@ -187,6 +190,10 @@ class DeviceConnection {
   // Send control commands to the device
   sendControlMessage(msg) {
     this._controlChannel.send(msg);
+  }
+
+  useMic(in_use) {
+    this._audio_stream.getTracks().forEach(track => track.enabled = in_use);
   }
 
   // Provide a callback to receive control-related comms from the device
@@ -379,12 +386,23 @@ export async function Connect(deviceId, options) {
     }
   }
   let pc = createPeerConnection(infraConfig, control);
-  let deviceConnection = new DeviceConnection(pc, control);
+
+  const audioStream =
+      await navigator.mediaDevices.getUserMedia({video: false, audio: true});
+  const audioTracks = audioStream.getAudioTracks();
+  if (audioTracks.length > 0) {
+    console.log(`Using Audio device: ${audioTracks[0].label}, with ${
+        audioTracks.length} tracks`);
+    audioTracks.forEach(track => pc.addTrack(track, audioStream));
+  }
+
+  let deviceConnection = new DeviceConnection(pc, control, audioStream);
   deviceConnection.description = deviceInfo;
   async function acceptOfferAndReplyAnswer(offer) {
     try {
       await pc.setRemoteDescription(offer);
       let answer = await pc.createAnswer();
+      console.log('Answer: ', answer);
       await pc.setLocalDescription(answer);
       await control.sendClientDescription(answer);
     } catch (e) {
