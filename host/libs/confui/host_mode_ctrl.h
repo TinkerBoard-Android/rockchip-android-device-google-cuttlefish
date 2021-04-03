@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 The Android Open Source Project
+ * Copyright (C) 2021 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,33 +18,25 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
-#include <memory>
 #include <mutex>
-#include <thread>
 
-#include "common/libs/semaphore/semaphore.h"
+#include "common/libs/confui/confui.h"
+#include "host/libs/confui/host_utils.h"
 
+using cuttlefish::confui::DebugLog;
 namespace cuttlefish {
 /**
  * mechanism to orchestrate concurrent executions of threads
  * that work for screen connector
  *
- * One thing is when any of wayland/socket-based connector or
- * confirmation UI has a frame, it should wake up the consumer
- * The two queues are separate, so the conditional variables,
- * etc, can't be in the queue
+ * Within VNC or WebRTC service, it tells when it is now in the Android Mode or
+ * Confirmation UI mode
  */
-class ScreenConnectorCtrl {
+class HostModeCtrl {
  public:
-  enum class ModeType {
-    kAndroidMode,
-    kConfUI_Mode
-  };
-
-  ScreenConnectorCtrl()
-      : atomic_mode_(ModeType::kAndroidMode)
-  {}
+  enum class ModeType : std::uint8_t { kAndroidMode = 55, kConfUI_Mode = 77 };
 
   /**
    * The thread that enqueues Android frames will call this to wait until
@@ -67,44 +59,61 @@ class ScreenConnectorCtrl {
    * amd64 desktop, with Linux 5.10
    */
   void WaitAndroidMode() {
+    DebugLog(cuttlefish::confui::thread::GetName(),
+             " checking atomic Android mode");
     if (atomic_mode_ == ModeType::kAndroidMode) {
-      return ;
+      DebugLog(cuttlefish::confui::thread::GetName(),
+               " returns as it is already Android mode");
+      return;
     }
-    auto check = [this]() -> bool { return atomic_mode_ == ModeType::kAndroidMode; };
+    auto check = [this]() -> bool {
+      return atomic_mode_ == ModeType::kAndroidMode;
+    };
     std::unique_lock<std::mutex> lock(mode_mtx_);
     and_mode_cv_.wait(lock, check);
+    DebugLog(cuttlefish::confui::thread::GetName(),
+             " awakes from cond var waiting for Android mode");
   }
 
   void SetMode(const ModeType mode) {
+    DebugLog(cuttlefish::confui::thread::GetName(),
+             " tries to acquire the lock in SetMode");
     std::lock_guard<std::mutex> lock(mode_mtx_);
+    DebugLog(cuttlefish::confui::thread::GetName(),
+             " acquired the lock in SetMode");
     atomic_mode_ = mode;
     if (atomic_mode_ == ModeType::kAndroidMode) {
+      DebugLog(cuttlefish::confui::thread::GetName(),
+               " signals kAndroidMode in SetMode");
       and_mode_cv_.notify_all();
+      return;
     }
+    DebugLog(cuttlefish::confui::thread::GetName(),
+             " signals kConfUI_Mode in SetMode");
+    confui_mode_cv_.notify_all();
   }
 
   auto GetMode() {
-    std::lock_guard<std::mutex> lock(mode_mtx_);
     ModeType ret_val = atomic_mode_;
     return ret_val;
   }
 
-  void SemWaitItem() {
-    sem_.SemWait();
+  auto IsConfirmatioUiMode() {
+    return (atomic_mode_ == ModeType::kConfUI_Mode);
   }
 
-  // Only called by the producers
-  void SemPostItem() {
-    sem_.SemPost();
+  auto IsAndroidMode() { return (atomic_mode_ == ModeType::kAndroidMode); }
+
+  static HostModeCtrl& Get() {
+    static HostModeCtrl host_mode_controller;
+    return host_mode_controller;
   }
 
  private:
+  HostModeCtrl() : atomic_mode_(ModeType::kAndroidMode) {}
   std::mutex mode_mtx_;
   std::condition_variable and_mode_cv_;
+  std::condition_variable confui_mode_cv_;
   std::atomic<ModeType> atomic_mode_;
-
-  // track the total number of items in all queues
-  Semaphore sem_;
 };
-
-} // namespace cuttlefish
+}  // end of namespace cuttlefish
