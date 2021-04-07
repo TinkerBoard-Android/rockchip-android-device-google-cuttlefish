@@ -154,9 +154,17 @@ WIFI_DRIVER_FW_PATH_AP      := "/dev/null"
 
 # vendor sepolicy
 BOARD_VENDOR_SEPOLICY_DIRS += device/google/cuttlefish/shared/sepolicy/vendor
+BOARD_VENDOR_SEPOLICY_DIRS += device/google/cuttlefish/shared/sepolicy/vendor/google
 
 BOARD_SEPOLICY_DIRS += system/bt/vendor_libs/linux/sepolicy
-BOARD_VENDOR_SEPOLICY_DIRS += device/google/cuttlefish/shared/sepolicy/vendor/google
+
+# Avoid multiple includes of sepolicy already included by Pixel experience.
+ifneq ($(filter aosp_% %_auto %_tv,$(PRODUCT_NAME)),)
+
+SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += hardware/google/pixel-sepolicy/flipendo
+
+endif
+
 # product sepolicy, allow other layers to append
 PRODUCT_PRIVATE_SEPOLICY_DIRS += device/google/cuttlefish/shared/sepolicy/product/private
 # PRODUCT_PUBLIC_SEPOLICY_DIRS += device/google/cuttlefish/shared/sepolicy/product/public
@@ -181,10 +189,10 @@ TARGET_RECOVERY_FSTAB ?= device/google/cuttlefish/shared/config/fstab.f2fs
 BOARD_SUPER_PARTITION_SIZE := 7516192768  # 7GiB
 BOARD_SUPER_PARTITION_GROUPS := google_system_dynamic_partitions google_vendor_dynamic_partitions
 BOARD_GOOGLE_SYSTEM_DYNAMIC_PARTITIONS_PARTITION_LIST := product system system_ext
-BOARD_GOOGLE_SYSTEM_DYNAMIC_PARTITIONS_SIZE := 5637144576  # 5.25GiB
+BOARD_GOOGLE_SYSTEM_DYNAMIC_PARTITIONS_SIZE := 5771362304  # 5.375GiB
 BOARD_GOOGLE_VENDOR_DYNAMIC_PARTITIONS_PARTITION_LIST := odm vendor vendor_dlkm odm_dlkm
-# 1532MiB, reserve 4MiB for dynamic partition metadata
-BOARD_GOOGLE_VENDOR_DYNAMIC_PARTITIONS_SIZE := 1606418432
+# 1404MiB, reserve 4MiB for dynamic partition metadata
+BOARD_GOOGLE_VENDOR_DYNAMIC_PARTITIONS_SIZE := 1472200704
 BOARD_BUILD_SUPER_IMAGE_BY_DEFAULT := true
 BOARD_SUPER_IMAGE_IN_UPDATE_PACKAGE := true
 TARGET_RELEASETOOLS_EXTENSIONS := device/google/cuttlefish/shared
