@@ -137,12 +137,25 @@ void ModemSimulator::SaveModemState() {
   }
 }
 
+bool ModemSimulator::IsRadioOn() const {
+  if (network_service_) {
+    return !network_service_->isRadioOff();
+  }
+  return false;
+}
+
 bool ModemSimulator::IsWaitingSmsPdu() {
   if (sms_service_) {
     return (sms_service_->IsWaitingSmsPdu() |
             sms_service_->IsWaitingSmsToSim());
   }
   return false;
+}
+
+void ModemSimulator::SetTimeZone(std::string timezone) {
+  if (misc_service_) {
+    misc_service_->SetTimeZone(timezone);
+  }
 }
 
 }  // namespace cuttlefish
