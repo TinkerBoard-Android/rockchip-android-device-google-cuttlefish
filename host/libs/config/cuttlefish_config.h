@@ -52,6 +52,8 @@ constexpr char kWifiConnectedMessage[] =
 constexpr char kEthernetConnectedMessage[] =
     "VIRTUAL_DEVICE_NETWORK_ETHERNET_CONNECTED";
 constexpr char kScreenChangedMessage[] = "VIRTUAL_DEVICE_SCREEN_CHANGED";
+constexpr char kDisplayPowerModeChangedMessage[] =
+    "VIRTUAL_DEVICE_DISPLAY_POWER_MODE_CHANGED";
 constexpr char kInternalDirName[] = "internal";
 constexpr char kSharedDirName[] = "shared";
 constexpr char kCrosvmVarEmptyDir[] = "/var/empty";
@@ -101,15 +103,11 @@ class CuttlefishConfig {
   int memory_mb() const;
   void set_memory_mb(int memory_mb);
 
-  int dpi() const;
-  void set_dpi(int dpi);
-
-  int refresh_rate_hz() const;
-  void set_refresh_rate_hz(int refresh_rate_hz);
-
   struct DisplayConfig {
     int width;
     int height;
+    int dpi;
+    int refresh_rate_hz;
   };
 
   std::vector<DisplayConfig> display_configs() const;
