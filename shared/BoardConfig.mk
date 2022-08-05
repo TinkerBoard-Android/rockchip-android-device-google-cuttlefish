@@ -114,9 +114,9 @@ TARGET_USES_HWC2 := true
 BOARD_MALLOC_ALIGNMENT := 16
 
 # Disable sparse on all filesystem images
-TARGET_USERIMAGES_SPARSE_EROFS_DISABLED := true
-TARGET_USERIMAGES_SPARSE_EXT_DISABLED := true
-TARGET_USERIMAGES_SPARSE_F2FS_DISABLED := true
+TARGET_USERIMAGES_SPARSE_EROFS_DISABLED ?= true
+TARGET_USERIMAGES_SPARSE_EXT_DISABLED ?= true
+TARGET_USERIMAGES_SPARSE_F2FS_DISABLED ?= true
 
 # Make the userdata partition 6G to accommodate ASAN and CTS
 BOARD_USERDATAIMAGE_PARTITION_SIZE := $(TARGET_USERDATAIMAGE_PARTITION_SIZE)
@@ -158,13 +158,6 @@ BOARD_VENDOR_SEPOLICY_DIRS += device/google/cuttlefish/shared/sepolicy/vendor
 BOARD_VENDOR_SEPOLICY_DIRS += device/google/cuttlefish/shared/sepolicy/vendor/google
 
 BOARD_SEPOLICY_DIRS += system/bt/vendor_libs/linux/sepolicy
-
-# Avoid multiple includes of sepolicy already included by Pixel experience.
-ifneq ($(filter aosp_% %_auto %_go_phone trout_% gull% %_tv,$(PRODUCT_NAME)),)
-
-SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += hardware/google/pixel-sepolicy/flipendo
-
-endif
 
 # product sepolicy, allow other layers to append
 PRODUCT_PRIVATE_SEPOLICY_DIRS += device/google/cuttlefish/shared/sepolicy/product/private
